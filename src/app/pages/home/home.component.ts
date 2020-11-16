@@ -1,5 +1,5 @@
 import { GonListData } from './../../difs/gon-list-data';
-import { AfterContentInit, Component, ElementRef, OnDestroy, OnInit, ViewChild } from '@angular/core';
+import { AfterContentInit, Component, ElementRef, OnDestroy, OnInit, ViewChild, AfterViewInit } from '@angular/core';
 import { FormControl } from '@angular/forms';
 import { Store } from '@ngrx/store';
 import { BehaviorSubject, combineLatest, fromEvent, Observable, Subscription } from 'rxjs';
@@ -9,15 +9,19 @@ import { DataSelectorService } from './../../core/services/data-selector.service
 import { ConnectorService, YtPlayerService } from '../../../app/core/services';
 import * as AppActions from '../../state/actions/app.actions'
 import { ServerEventName } from 'app/difs/server-event-name.enum';
+import { ListDataType } from '../../difs/list-data-type.enum';
+import { SongInfo } from 'app/difs/song-info';
+import { Subject } from 'rxjs/internal/Subject';
 
 @Component({
   selector: 'app-home',
   templateUrl: './home.component.html',
   styleUrls: ['./home.component.scss']
 })
-export class HomeComponent implements OnInit, AfterContentInit, OnDestroy {
+export class HomeComponent implements OnInit, AfterContentInit,AfterViewInit, OnDestroy {
 
   @ViewChild('footMenu', { static: true }) footMenu: ElementRef;
+  @ViewChild('roomToast', { static: true }) roomToast: ElementRef;
 
   isReadyVideo$ = new BehaviorSubject<boolean>(false);
   currentPlaying$: Observable<string>;
@@ -36,36 +40,29 @@ export class HomeComponent implements OnInit, AfterContentInit, OnDestroy {
   priviouseGroup$: Observable<string>;
 
   gonButtonListDatas: GonListData[] = [{
-    index: 0, name: '一', value: 'test1', description: 'test1'
+    index: 0, name: '1', value: 'test1', description: 'test1'
   }, {
-    index: 1, name: '二', value: 'test1', description: 'test1'
+    index: 1, name: '2', value: 'test1', description: 'test1'
   }, {
-    index: 2, name: '三', value: 'test1', description: 'test1'
+    index: 2, name: '3', value: 'test1', description: 'test1'
   }, {
-    index: 3, name: '四', value: 'test1', description: 'test1'
+    index: 3, name: '4', value: 'test1', description: 'test1'
   }, {
-    index: 4, name: '五', value: 'test1', description: 'test1'
+    index: 4, name: '5', value: 'test1', description: 'test1'
   },
   ];
-  gonListData = [
-    {
-      index: 0, name: '第一首音樂', value: 'test1', description: 'test1'
-    }, {
-      index: 1, name: '第二首音樂', value: 'test1', description: 'test1'
-    }, {
-      index: 2, name: '第三首音樂', value: 'test1', description: 'test1'
-    }, {
-      index: 3, name: '第四首音樂', value: 'test1', description: 'test1'
-    }, {
-      index: 4, name: '第五五五五五五五五五五五五五五五五五首音樂', value: 'test1', description: 'test1'
-    }
-  ];
+
+  listDataType = ListDataType.YTPlaylist;
+  isReceiving = true;//判斷是否為自己控制自己音樂
+  gonVideoList$ = new Subject<GonListData[]>();
+  currentPlaylist$: Observable<any>;
 
   constructor(
     public ytPlayerService: YtPlayerService,
     public tubeConnect: ConnectorService,
     private store: Store<any>,
     private dataSelectorService: DataSelectorService,
+    private el: ElementRef
   ) { }
 
 
@@ -78,22 +75,43 @@ export class HomeComponent implements OnInit, AfterContentInit, OnDestroy {
     const _footoptionArea = _footMenuHTML.querySelector('.foot-menu-area');
     const onConnectedHandler = this.tubeConnect.listeningServerEvent(ServerEventName.OnConnected)();
     const onReceiveTubeLinkHandler = this.tubeConnect.listeningServerEvent(ServerEventName.OnReceiveTubeLink)();
-    // TODO wait for server compliete those methon
     const onReceiveTubeTimeHandler = this.tubeConnect.listeningServerEvent(ServerEventName.OnReceiveTubeTime)();
     const onStopTubeHandler = this.tubeConnect.listeningServerEvent(ServerEventName.OnReceiveStopTube)();
+    const onCurrnetPlaylistChange = this.currentPlaylist$;
 
+    const syncPlayListData = onCurrnetPlaylistChange.subscribe(playlist => {
+      const gonListData = [];
+      playlist.forEach(v => {
+        const video: GonListData = {
+          index: 0,
+          value: v.songTag,
+          name: v.songName,
+          description: '',
+        }
 
+        gonListData.push(video)
+      })
+      this.gonVideoList$.next(gonListData);
+      console.log(gonListData);
+      console.log(playlist, 'syncData!!');
+    })
 
     const stopTube = onStopTubeHandler.subscribe((tubelink) => {
-      this.player.stopVideo();
+      if (this.isReceiving) {
+        this.player.stopVideo();
+      }
     })
 
     const receiveTubeTime = onReceiveTubeTimeHandler.subscribe((loaddata) => {
-      this.player.loadVideoById(loaddata.videoId, loaddata.time);
+      if (this.isReceiving) {
+        this.player.loadVideoById(loaddata.videoId, loaddata.time);
+      }
     })
 
     const receiveTubeLink = onReceiveTubeLinkHandler.subscribe((tubeLink) => {
-      this.player.loadVideoById(tubeLink);
+      if (this.isReceiving) {
+        this.player.loadVideoById(tubeLink);
+      }
     })
 
     const mouseEnter = fromEvent(_footMenuHTML, 'mouseenter').subscribe(() => {
@@ -112,12 +130,14 @@ export class HomeComponent implements OnInit, AfterContentInit, OnDestroy {
         this.tubeConnect.serveConnection.invoke('AddGroup', this._groupID, tempgroup);
       }
     })
+
     this._eventSubscriptions.add(mouseLeave);
     this._eventSubscriptions.add(mouseEnter);
     this._eventSubscriptions.add(isConnected);
     this._eventSubscriptions.add(receiveTubeLink);
     this._eventSubscriptions.add(receiveTubeTime);
     this._eventSubscriptions.add(stopTube);
+    this._eventSubscriptions.add(syncPlayListData);
   }
 
   startVideo(): void {
@@ -162,18 +182,59 @@ export class HomeComponent implements OnInit, AfterContentInit, OnDestroy {
   }
 
   doCreatePlayList(): void {
-
     // TODO : Add new playlist
     console.log('Add new playlist!');
-
   }
 
-  //點擊list事件
-  clickListData(event:{index:number,data:GonListData}){
-
-    console.log('event',event)
+  clickListData(event: { index: number, data: GonListData }) {
+    this.store.dispatch(AppActions.setSong({ currentPlaying: event.data.value }))
+    this.sendGroupTubeLink(event.data.value);
+    this.player.loadVideoById(event.data.value);
   }
 
+  doAddVideo(event: GonListData): void {
+    const url: string = event.value;
+    const newVideo: SongInfo = {
+      songName: event.name,
+      songTag: this.parseURLToTag(url),
+    }
+    console.log('add!!', newVideo);
+    this.store.dispatch(AppActions.addSong({ song: newVideo }));
+  }
+
+  parseURLToTag(url: string): string {
+    const tag = url.split('=')[1].split('&')[0];
+    return tag;
+  }
+
+  sendGroupTubeLink(tag: string): void {
+    const currentGroup$ = this.dataSelectorService.getStoreData(AppStateName.currentGroup)();
+    currentGroup$.pipe(take(1)).subscribe(g => {
+      if (g) {
+        console.log('sent tube link sent');
+        this.tubeConnect.serveConnection.invoke('SendGroupTubeLink', g, tag);
+      }
+    })
+  }
+
+  deleteListData(event: number) {
+    this.store.dispatch(AppActions.removeSong({ removeIndex: event }))
+  }
+
+  changeRoom(event: KeyboardEvent) {
+    this.store.dispatch(AppActions.setGroup({ currentGroup: this.currentGroupFormControl.value }));
+    this.enterCurrentGroup();
+
+    const toastElement = this.roomToast.nativeElement as HTMLElement;
+    toastElement.classList.add('toast-sm-show');
+    setTimeout(() => {
+      toastElement.classList.remove('toast-sm-show');
+    }, 1000);
+  }
+
+  switchReceiveBroadcast() {
+    this.isReceiving = !this.isReceiving;
+  }
 
   /** DataControls
    * Store Data get/set
@@ -182,6 +243,7 @@ export class HomeComponent implements OnInit, AfterContentInit, OnDestroy {
     this.currentPlaying$ = this.dataSelectorService.getStoreData(AppStateName.currentPlaying)();
     this.currentGroup$ = this.dataSelectorService.getStoreData(AppStateName.currentGroup)();
     this.priviouseGroup$ = this.dataSelectorService.getStoreData(AppStateName.priviousGroup)();
+    this.currentPlaylist$ = this.dataSelectorService.getStoreData(AppStateName.playlist)();
   }
 
   enterCurrentGroup(): void {
@@ -199,7 +261,21 @@ export class HomeComponent implements OnInit, AfterContentInit, OnDestroy {
     })
   }
 
-
+  setInitData() {
+    this.currentPlaylist$.pipe(take(1)).subscribe(playlist => {
+      const gonListData = [];
+      playlist.forEach(v => {
+        const video: GonListData = {
+          index: 0,
+          value: v.songTag,
+          name: v.songName,
+          description: '',
+        }
+        gonListData.push(video)
+      })
+      this.gonVideoList$.next(gonListData);
+    })
+  }
 
   /** LifeCycles
    * lifeCycle hooks below
@@ -210,9 +286,13 @@ export class HomeComponent implements OnInit, AfterContentInit, OnDestroy {
     this.enterCurrentGroup();
     this.addListeners();
     this.startVideo();
-
+    // 隨機數字2次方之後 以36位數(0~9 + a~z)進位轉字串
+    // this.secretNo = Math.pow(Math.floor(Math.random() * 100000) + 1, 2).toString(36);
   }
 
+  ngAfterViewInit(): void {
+    this.setInitData();
+  }
   ngOnDestroy(): void {
     this._eventSubscriptions.unsubscribe();
   }
